@@ -1,4 +1,4 @@
-name: BOT FIN - Bybit Connection Test
+name: BOT FIN - Bybit GitHub Runner Test
 
 on:
   workflow_dispatch:
@@ -7,9 +7,19 @@ permissions:
   contents: read
 
 jobs:
-  bybit-connection-test:
-    name: Test Bybit EU Connection
-    runs-on: ubuntu-latest
+  test-bybit:
+    name: Bybit test - ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-22.04
+          - windows-latest
+          - macos-latest
+          - macos-13
+
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 5
 
     steps:
@@ -21,15 +31,61 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Python dependencies
+      - name: Show runner information
+        shell: bash
+        run: |
+          echo "=========================================="
+          echo "BOT FIN - GITHUB RUNNER"
+          echo "=========================================="
+          echo "Runner OS: $RUNNER_OS"
+          echo "Runner architecture: $RUNNER_ARCH"
+          echo "=========================================="
+
+      - name: Install dependencies
+        shell: bash
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      - name: Run Bybit connection test
+      - name: Test Bybit EU public endpoint
+        shell: bash
+        run: |
+          python - <<'PY'
+          import requests
+          import sys
+
+          url = "https://api.bybit.eu/v5/market/time"
+
+          print("Testing:", url)
+
+          try:
+              response = requests.get(
+                  url,
+                  timeout=15,
+                  headers={
+                      "User-Agent": "BOT-FIN/1.0"
+                  },
+              )
+          except Exception as exc:
+              print("CONNECTION ERROR:", type(exc).__name__, str(exc))
+              sys.exit(1)
+
+          print("HTTP STATUS:", response.status_code)
+          print("RESPONSE:", response.text[:500])
+
+          if response.status_code == 200:
+              print("PUBLIC_BYBIT_CONNECTION=OK")
+          else:
+              print("PUBLIC_BYBIT_CONNECTION=BLOCKED")
+              sys.exit(1)
+          PY
+
+      - name: Test authenticated Bybit connection
+        if: success()
         env:
           BYBIT_API_KEY: ${{ secrets.BYBIT_API_KEY }}
           BYBIT_API_SECRET: ${{ secrets.BYBIT_API_SECRET }}
           PYTHONUNBUFFERED: "1"
+        shell: bash
         run: |
           python bybit_check.py
