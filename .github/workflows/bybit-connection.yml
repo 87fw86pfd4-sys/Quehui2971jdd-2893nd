@@ -1,4 +1,4 @@
-name: BOT FIN - Bybit GitHub Runner Test
+name: BOT FIN - Diagnose Bybit 403
 
 on:
   workflow_dispatch:
@@ -7,8 +7,9 @@ permissions:
   contents: read
 
 jobs:
-  test-bybit:
-    name: Bybit test - ${{ matrix.os }}
+  diagnose-bybit:
+    name: Diagnose - ${{ matrix.os }}
+
     strategy:
       fail-fast: false
       matrix:
@@ -17,13 +18,12 @@ jobs:
           - ubuntu-22.04
           - windows-latest
           - macos-latest
-          - macos-13
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 5
 
     steps:
-      - name: Checkout BOT FIN
+      - name: Checkout repository
         uses: actions/checkout@v6
 
       - name: Setup Python
@@ -31,61 +31,264 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Show runner information
+      - name: Install requests
         shell: bash
         run: |
-          echo "=========================================="
-          echo "BOT FIN - GITHUB RUNNER"
-          echo "=========================================="
-          echo "Runner OS: $RUNNER_OS"
-          echo "Runner architecture: $RUNNER_ARCH"
-          echo "=========================================="
+          python -m pip install requests==2.32.5
 
-      - name: Install dependencies
-        shell: bash
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-
-      - name: Test Bybit EU public endpoint
+      - name: Diagnose runner and Bybit
         shell: bash
         run: |
           python - <<'PY'
-          import requests
+          import json
+          import socket
           import sys
+
+          import requests
+
+
+          print("=" * 70)
+          print("BOT FIN - GITHUB -> BYBIT DIAGNOSTIC")
+          print("=" * 70)
+
+          session = requests.Session()
+
+          session.headers.update(
+              {
+                  "User-Agent": "BOT-FIN-DIAGNOSTIC/1.0",
+                  "Accept": "application/json,text/plain,*/*",
+              }
+          )
+
+          # ---------------------------------------------------------
+          # 1. Public outgoing IP
+          # ---------------------------------------------------------
+
+          public_ip = "UNKNOWN"
+
+          try:
+              r = session.get(
+                  "https://api.ipify.org?format=json",
+                  timeout=15,
+              )
+
+              print()
+              print("IPIFY HTTP:", r.status_code)
+
+              if r.ok:
+                  data = r.json()
+                  public_ip = data.get("ip", "UNKNOWN")
+
+              print("PUBLIC IP:", public_ip)
+
+          except Exception as exc:
+              print()
+              print(
+                  "IPIFY ERROR:",
+                  type(exc).__name__,
+                  str(exc),
+              )
+
+          # ---------------------------------------------------------
+          # 2. Country lookup
+          # ---------------------------------------------------------
+
+          try:
+              r = session.get(
+                  "https://ipinfo.io/json",
+                  timeout=15,
+              )
+
+              print()
+              print("IPINFO HTTP:", r.status_code)
+
+              if r.ok:
+                  data = r.json()
+
+                  print(
+                      "COUNTRY:",
+                      data.get("country", "UNKNOWN"),
+                  )
+
+                  print(
+                      "REGION:",
+                      data.get("region", "UNKNOWN"),
+                  )
+
+                  print(
+                      "CITY:",
+                      data.get("city", "UNKNOWN"),
+                  )
+
+                  print(
+                      "ORG:",
+                      data.get("org", "UNKNOWN"),
+                  )
+              else:
+                  print(
+                      "IPINFO RESPONSE:",
+                      r.text[:500],
+                  )
+
+          except Exception as exc:
+              print(
+                  "IPINFO ERROR:",
+                  type(exc).__name__,
+                  str(exc),
+              )
+
+          # ---------------------------------------------------------
+          # 3. DNS resolution
+          # ---------------------------------------------------------
+
+          hosts = [
+              "api.bybit.eu",
+              "api.bybit.com",
+          ]
+
+          print()
+          print("=" * 70)
+          print("DNS")
+          print("=" * 70)
+
+          for host in hosts:
+              try:
+                  results = socket.getaddrinfo(
+                      host,
+                      443,
+                      type=socket.SOCK_STREAM,
+                  )
+
+                  addresses = sorted(
+                      {
+                          item[4][0]
+                          for item in results
+                      }
+                  )
+
+                  print(
+                      f"{host}:",
+                      ", ".join(addresses),
+                  )
+
+              except Exception as exc:
+                  print(
+                      f"{host}: DNS ERROR:",
+                      type(exc).__name__,
+                      str(exc),
+                  )
+
+          # ---------------------------------------------------------
+          # 4. Bybit EU public API
+          # ---------------------------------------------------------
+
+          print()
+          print("=" * 70)
+          print("BYBIT EU TEST")
+          print("=" * 70)
 
           url = "https://api.bybit.eu/v5/market/time"
 
-          print("Testing:", url)
+          try:
+              response = session.get(
+                  url,
+                  timeout=20,
+                  allow_redirects=False,
+              )
+
+              print("URL:", url)
+              print("HTTP STATUS:", response.status_code)
+
+              print("HEADERS:")
+
+              for key, value in response.headers.items():
+                  safe_key = key.lower()
+
+                  if safe_key in {
+                      "set-cookie",
+                      "cookie",
+                  }:
+                      continue
+
+                  print(
+                      f"  {key}: {value}"
+                  )
+
+              print()
+              print("BODY:")
+              print(response.text[:1500])
+
+          except Exception as exc:
+              print(
+                  "BYBIT EU ERROR:",
+                  type(exc).__name__,
+                  str(exc),
+              )
+
+              sys.exit(1)
+
+          # ---------------------------------------------------------
+          # 5. Global endpoint diagnostic only
+          # ---------------------------------------------------------
+
+          print()
+          print("=" * 70)
+          print("BYBIT GLOBAL TEST - DIAGNOSTIC ONLY")
+          print("=" * 70)
+
+          global_url = (
+              "https://api.bybit.com/v5/market/time"
+          )
 
           try:
-              response = requests.get(
-                  url,
-                  timeout=15,
-                  headers={
-                      "User-Agent": "BOT-FIN/1.0"
-                  },
+              response_global = session.get(
+                  global_url,
+                  timeout=20,
+                  allow_redirects=False,
               )
-          except Exception as exc:
-              print("CONNECTION ERROR:", type(exc).__name__, str(exc))
-              sys.exit(1)
 
-          print("HTTP STATUS:", response.status_code)
-          print("RESPONSE:", response.text[:500])
+              print("URL:", global_url)
+              print(
+                  "HTTP STATUS:",
+                  response_global.status_code,
+              )
+
+              print("BODY:")
+              print(
+                  response_global.text[:1000]
+              )
+
+          except Exception as exc:
+              print(
+                  "GLOBAL BYBIT ERROR:",
+                  type(exc).__name__,
+                  str(exc),
+              )
+
+          # ---------------------------------------------------------
+          # Final result
+          # ---------------------------------------------------------
+
+          print()
+          print("=" * 70)
 
           if response.status_code == 200:
-              print("PUBLIC_BYBIT_CONNECTION=OK")
-          else:
-              print("PUBLIC_BYBIT_CONNECTION=BLOCKED")
-              sys.exit(1)
-          PY
+              print(
+                  "RESULT: BYBIT EU PUBLIC API WORKS"
+              )
+              sys.exit(0)
 
-      - name: Test authenticated Bybit connection
-        if: success()
-        env:
-          BYBIT_API_KEY: ${{ secrets.BYBIT_API_KEY }}
-          BYBIT_API_SECRET: ${{ secrets.BYBIT_API_SECRET }}
-          PYTHONUNBUFFERED: "1"
-        shell: bash
-        run: |
-          python bybit_check.py
+          print(
+              "RESULT: BYBIT EU BLOCKED/REJECTED"
+          )
+
+          print(
+              "PUBLIC IP:",
+              public_ip,
+          )
+
+          print("=" * 70)
+
+          sys.exit(1)
+
+          PY
